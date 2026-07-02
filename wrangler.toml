@@ -1,0 +1,7 @@
+name = "stock-risk-report"
+compatibility_date = "2024-11-01"
+pages_build_output_dir = "public"
+
+# Secrets (set these, do NOT put real values in this file):
+#   wrangler pages secret put FMP_API_KEY
+#   wrangler pages secret put ANTHROPIC_API_KEY   (optional, enables AI-written catalysts/risks/verdict)
