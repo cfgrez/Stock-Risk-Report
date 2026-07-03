@@ -31,14 +31,14 @@ const mockPT = [{ targetConsensus: 410, targetHigh: 600, targetLow: 24.86 }];
 
 global.fetch = async (url) => {
   const body =
-    url.includes("/quote/") ? mockQuote :
-    url.includes("/profile/") ? mockProfile :
-    url.includes("/ratios-ttm/") ? mockRatios :
-    url.includes("/key-metrics-ttm/") ? mockKM :
-    url.includes("/income-statement/") ? mockIncomeQ :
-    url.includes("/cash-flow-statement/") ? mockCashQ :
-    url.includes("/balance-sheet-statement/") ? mockBalanceQ :
-    url.includes("/historical-price-full/") ? mockHistorical :
+    url.includes("/quote?") ? mockQuote :
+    url.includes("/profile?") ? mockProfile :
+    url.includes("/ratios-ttm?") ? mockRatios :
+    url.includes("/key-metrics-ttm?") ? mockKM :
+    url.includes("/income-statement?") ? mockIncomeQ :
+    url.includes("/cash-flow-statement?") ? mockCashQ :
+    url.includes("/balance-sheet-statement?") ? mockBalanceQ :
+    url.includes("/historical-price-eod/full") ? mockHistorical :
     url.includes("price-target-consensus") ? mockPT :
     [];
   return { ok: true, json: async () => body };

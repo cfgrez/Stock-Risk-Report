@@ -8,8 +8,7 @@
 // "N/A" or templated text if a field or the AI key is missing, so the
 // tool works on the free tier with zero AI key configured.
 
-const FMP_BASE = "https://financialmodelingprep.com/api/v3";
-const FMP_BASE_V4 = "https://financialmodelingprep.com/api/v4";
+const FMP_BASE = "https://financialmodelingprep.com/stable";
 
 export async function handleReport(request, env) {
   const url = new URL(request.url);
@@ -30,19 +29,24 @@ export async function handleReport(request, env) {
   try {
     const [quote, profile, ratios, keyMetrics, incomeQ, cashflowQ, balanceQ, historical, priceTarget] =
       await Promise.all([
-        safeFetch(`${FMP_BASE}/quote/${raw}?apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/profile/${raw}?apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/ratios-ttm/${raw}?apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/key-metrics-ttm/${raw}?apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/income-statement/${raw}?period=quarter&limit=6&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/cash-flow-statement/${raw}?period=quarter&limit=6&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/balance-sheet-statement/${raw}?period=quarter&limit=2&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/historical-price-full/${raw}?timeseries=380&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE_V4}/price-target-consensus?symbol=${raw}&apikey=${apiKey}`),
+        safeFetch(`${FMP_BASE}/quote?symbol=${raw}&apikey=${apiKey}`),
+        safeFetch(`${FMP_BASE}/profile?symbol=${raw}&apikey=${apiKey}`),
+        safeFetch(`${FMP_BASE}/ratios-ttm?symbol=${raw}&apikey=${apiKey}`),
+        safeFetch(`${FMP_BASE}/key-metrics-ttm?symbol=${raw}&apikey=${apiKey}`),
+        safeFetch(`${FMP_BASE}/income-statement?symbol=${raw}&period=quarter&limit=6&apikey=${apiKey}`),
+        safeFetch(`${FMP_BASE}/cash-flow-statement?symbol=${raw}&period=quarter&limit=6&apikey=${apiKey}`),
+        safeFetch(`${FMP_BASE}/balance-sheet-statement?symbol=${raw}&period=quarter&limit=2&apikey=${apiKey}`),
+        safeFetch(`${FMP_BASE}/historical-price-eod/full?symbol=${raw}&apikey=${apiKey}`),
+        safeFetch(`${FMP_BASE}/price-target-consensus?symbol=${raw}&apikey=${apiKey}`),
       ]);
 
     if (!quote || !quote[0]) {
-      return json({ error: `No data found for "${raw}". Check the ticker and try again.` }, 404);
+      return json(
+        {
+          error: `No data found for "${raw}". Either the ticker is wrong, or your FMP_API_KEY doesn't have access to the /quote endpoint on your current plan — check the key in the FMP dashboard and try again.`,
+        },
+        404
+      );
     }
 
     const q = quote[0];
@@ -52,8 +56,11 @@ export async function handleReport(request, env) {
     const bal = (balanceQ && balanceQ[0]) || {};
     const pt = (priceTarget && (Array.isArray(priceTarget) ? priceTarget[0] : priceTarget)) || {};
 
-    const incomeSeries = (incomeQ || []).slice().reverse(); // oldest -> newest
-    const cashSeries = (cashflowQ || []).slice().reverse();
+    const incomeSeries = (incomeQ || [])
+      .filter((i) => i && i.date)
+      .slice()
+      .sort((a, b) => new Date(a.date) - new Date(b.date)); // oldest -> newest
+    const cashSeries = (cashflowQ || []).filter((c) => c && c.date);
     const fcfByDate = new Map(cashSeries.map((c) => [c.date, c.freeCashFlow]));
 
     const quarters = incomeSeries.slice(-5).map((i) => ({
@@ -76,11 +83,14 @@ export async function handleReport(request, env) {
     const latestFcf = fcfByDate.get(latestQ?.date) ?? null;
 
     // ---- historical price series for the chart ----
-    const histRaw = (historical && historical.historical) || [];
+    // historical-price-eod/full has returned either a flat array of bars,
+    // or {symbol, historical: [...]}, depending on API version — handle both,
+    // and sort explicitly by date rather than assuming newest/oldest-first order.
+    const histRaw = Array.isArray(historical) ? historical : (historical && historical.historical) || [];
     const hist = histRaw
+      .filter((d) => d && d.date && typeof d.close === "number")
       .slice()
-      .reverse() // oldest -> newest
-      .filter((d) => typeof d.close === "number");
+      .sort((a, b) => new Date(a.date) - new Date(b.date)); // oldest -> newest
     const prices = hist.map((d) => ({ date: d.date, close: d.close }));
 
     // ---- valuation inputs ----
