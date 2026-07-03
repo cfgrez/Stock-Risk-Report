@@ -27,23 +27,45 @@ export async function handleReport(request, env) {
   }
 
   try {
-    const [quote, profile, ratios, keyMetrics, incomeQ, cashflowQ, balanceQ, historical, priceTarget] =
-      await Promise.all([
-        safeFetch(`${FMP_BASE}/quote?symbol=${raw}&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/profile?symbol=${raw}&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/ratios-ttm?symbol=${raw}&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/key-metrics-ttm?symbol=${raw}&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/income-statement?symbol=${raw}&period=quarter&limit=6&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/cash-flow-statement?symbol=${raw}&period=quarter&limit=6&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/balance-sheet-statement?symbol=${raw}&period=quarter&limit=2&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/historical-price-eod/full?symbol=${raw}&apikey=${apiKey}`),
-        safeFetch(`${FMP_BASE}/price-target-consensus?symbol=${raw}&apikey=${apiKey}`),
-      ]);
+    const results = await Promise.all([
+      safeFetch(`${FMP_BASE}/quote?symbol=${raw}&apikey=${apiKey}`, "quote"),
+      safeFetch(`${FMP_BASE}/profile?symbol=${raw}&apikey=${apiKey}`, "profile"),
+      safeFetch(`${FMP_BASE}/ratios-ttm?symbol=${raw}&apikey=${apiKey}`, "ratios-ttm"),
+      safeFetch(`${FMP_BASE}/key-metrics-ttm?symbol=${raw}&apikey=${apiKey}`, "key-metrics-ttm"),
+      safeFetch(`${FMP_BASE}/income-statement?symbol=${raw}&period=quarter&limit=6&apikey=${apiKey}`, "income-statement"),
+      safeFetch(`${FMP_BASE}/cash-flow-statement?symbol=${raw}&period=quarter&limit=6&apikey=${apiKey}`, "cash-flow-statement"),
+      safeFetch(`${FMP_BASE}/balance-sheet-statement?symbol=${raw}&period=quarter&limit=2&apikey=${apiKey}`, "balance-sheet-statement"),
+      safeFetch(`${FMP_BASE}/historical-price-eod/full?symbol=${raw}&apikey=${apiKey}`, "historical-price-eod"),
+      safeFetch(`${FMP_BASE}/price-target-consensus?symbol=${raw}&apikey=${apiKey}`, "price-target-consensus"),
+    ]);
+    const [rQuote, rProfile, rRatios, rKeyMetrics, rIncomeQ, rCashflowQ, rBalanceQ, rHistorical, rPriceTarget] = results;
+    const quote = rQuote.data,
+      profile = rProfile.data,
+      ratios = rRatios.data,
+      keyMetrics = rKeyMetrics.data,
+      incomeQ = rIncomeQ.data,
+      cashflowQ = rCashflowQ.data,
+      balanceQ = rBalanceQ.data,
+      historical = rHistorical.data,
+      priceTarget = rPriceTarget.data;
+
+    // Diagnostics: what each FMP call actually returned. Harmless to include
+    // always — the frontend ignores unknown fields, and it saves a round of
+    // guesswork if a field ever comes back empty again. View it by opening
+    // /api/report?ticker=XXX directly in the browser.
+    const debug = results.map((r) => ({
+      endpoint: r.label,
+      status: r.status,
+      ok: r.ok,
+      empty: r.empty,
+      error: r.error,
+    }));
 
     if (!quote || !quote[0]) {
       return json(
         {
           error: `No data found for "${raw}". Either the ticker is wrong, or your FMP_API_KEY doesn't have access to the /quote endpoint on your current plan — check the key in the FMP dashboard and try again.`,
+          _debug: debug,
         },
         404
       );
@@ -94,16 +116,19 @@ export async function handleReport(request, env) {
     const prices = hist.map((d) => ({ date: d.date, close: d.close }));
 
     // ---- valuation inputs ----
-    const pe = numOr(q.pe, r.peRatioTTM);
-    const peg = numOr(r.pegRatioTTM, km.pegRatioTTM);
+    // FMP's stable API renamed several ratios-ttm fields vs. the old v3 API
+    // (e.g. peRatioTTM -> priceToEarningsRatioTTM). Try the new name first,
+    // fall back to the old name in case FMP reverts/varies by plan.
+    const pe = numOr(r.priceToEarningsRatioTTM, r.peRatioTTM, q.pe);
+    const peg = numOr(r.priceToEarningsGrowthRatioTTM, r.pegRatioTTM, km.pegRatioTTM);
     const evEbitda = numOr(km.evToEBITDATTM, r.enterpriseValueMultipleTTM);
     const priceToSales = numOr(r.priceToSalesRatioTTM, km.evToSalesTTM);
 
     // ---- financial health inputs ----
     const currentRatio = numOr(r.currentRatioTTM, km.currentRatioTTM);
-    const debtEquity = numOr(r.debtEquityRatioTTM, km.debtToEquityTTM);
-    const roe = pctMaybe(numOr(r.returnOnEquityTTM, km.roeTTM));
-    const roic = pctMaybe(km.roicTTM);
+    const debtEquity = numOr(r.debtToEquityRatioTTM, r.debtEquityRatioTTM, km.debtToEquityTTM);
+    const roe = pctMaybe(numOr(km.returnOnEquityTTM, r.returnOnEquityTTM, km.roeTTM));
+    const roic = pctMaybe(numOr(km.returnOnInvestedCapitalTTM, km.roicTTM));
     const cashAndSTI = bal.cashAndShortTermInvestments ?? null;
 
     // ---- scoring ----
@@ -233,6 +258,7 @@ export async function handleReport(request, env) {
 
     const payload = {
       meta: { generatedAt: new Date().toISOString() },
+      _debug: debug,
       identity: {
         ticker: raw,
         name: p.companyName || raw,
@@ -487,15 +513,28 @@ function quarterLabel(date, period, calendarYear) {
   const q = Math.floor(d.getUTCMonth() / 3) + 1;
   return `Q${q} ${d.getUTCFullYear()}`;
 }
-async function safeFetch(url) {
+async function safeFetch(url, label) {
   try {
     const res = await fetch(url, { headers: { accept: "application/json" } });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data && data["Error Message"]) return null;
-    return data;
-  } catch {
-    return null;
+    let data = null;
+    let errorNote = null;
+    try {
+      data = await res.json();
+    } catch {
+      errorNote = "non-JSON response";
+    }
+    if (data && data["Error Message"]) errorNote = String(data["Error Message"]).slice(0, 200);
+    const isEmpty = data == null || (Array.isArray(data) && data.length === 0);
+    return {
+      label,
+      status: res.status,
+      ok: res.ok && !errorNote,
+      empty: isEmpty,
+      error: !res.ok ? `HTTP ${res.status}` : errorNote,
+      data: res.ok && !errorNote ? data : null,
+    };
+  } catch (err) {
+    return { label, status: 0, ok: false, empty: true, error: String(err.message || err), data: null };
   }
 }
 function json(obj, status = 200, cacheSeconds = 0) {

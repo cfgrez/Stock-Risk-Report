@@ -7,8 +7,8 @@ const mockQuote = [{
   pe: 380.6, exchange: "NASDAQ", earningsAnnouncement: "2026-07-22T20:00:00.000Z",
 }];
 const mockProfile = [{ companyName: "Test Corp", sector: "Technology", industry: "Software", city: "Austin", country: "US", beta: 1.8, exchangeShortName: "NASDAQ" }];
-const mockRatios = [{ peRatioTTM: 380.6, pegRatioTTM: 4.23, priceToSalesRatioTTM: 15.9, currentRatioTTM: 2.04, debtEquityRatioTTM: 0.19, returnOnEquityTTM: 0.049 }];
-const mockKM = [{ evToEBITDATTM: 129.9, roicTTM: 0.0634, currentRatioTTM: 2.04, debtToEquityTTM: 0.19 }];
+const mockRatios = [{ priceToEarningsRatioTTM: 380.6, priceToEarningsGrowthRatioTTM: 4.23, priceToSalesRatioTTM: 15.9, currentRatioTTM: 2.04, debtToEquityRatioTTM: 0.19 }];
+const mockKM = [{ evToEBITDATTM: 129.9, returnOnInvestedCapitalTTM: 0.0634, returnOnEquityTTM: 0.049, currentRatioTTM: 2.04, debtToEquityTTM: 0.19 }];
 function q(rev, gp, oi, ni, eps, period, year, date) {
   return { date, period, calendarYear: String(year), revenue: rev, grossProfitRatio: gp, operatingIncomeRatio: oi, netIncome: ni, eps };
 }
@@ -41,7 +41,7 @@ global.fetch = async (url) => {
     url.includes("/historical-price-eod/full") ? mockHistorical :
     url.includes("price-target-consensus") ? mockPT :
     [];
-  return { ok: true, json: async () => body };
+  return { ok: true, status: 200, json: async () => body };
 };
 
 const req = new Request("https://example.com/api/report?ticker=TEST");
